@@ -1,145 +1,125 @@
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>集会QRコード受付</title>
+<title>集会QRコード読み取り</title>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <style>
 body {
   font-family: sans-serif;
-  text-align: center;
   background: #f3f6fa;
+  margin: 0;
   padding: 20px;
   color: #203040;
 }
-.card {
+main {
+  max-width: 500px;
+  margin: auto;
   background: white;
   padding: 20px;
   border-radius: 14px;
-  max-width: 500px;
-  margin: auto;
 }
+h2 { text-align: center; }
 button {
   width: 100%;
-  padding: 15px;
+  padding: 14px;
   margin: 8px 0;
   border: 0;
   border-radius: 9px;
   background: #145da0;
   color: white;
-  font-size: 17px;
-  font-weight: bold;
+  font-size: 16px;
 }
-#reader {
-  margin: 15px auto;
-  max-width: 400px;
-}
-#message {
-  padding: 12px;
+#reader { width: 100%; margin: 15px auto; }
+#result {
+  padding: 15px;
   background: #e7f4e8;
-  border-radius: 8px;
+  border-radius: 9px;
+  overflow-wrap: anywhere;
 }
 </style>
 </head>
 <body>
-<div class="card">
-<h2>📱 集会QRコード受付</h2>
-<p>カメラで会員QRコードを読み取ってください。</p>
+<main>
+<h2>📱 集会QR受付</h2>
+<p>カメラで会員カードのQRコードを読み取ります。</p>
+
+<button onclick="startScan()">カメラを起動</button>
+<button onclick="stopScan()">カメラを停止</button>
 
 <div id="reader"></div>
-<div id="message">下のボタンを押してカメラを起動してください。</div>
 
-<button id="start" onclick="startCamera()">カメラを起動</button>
-<button onclick="closeScanner()">戻る・終了</button>
-</div>
+<h3>読み取り結果</h3>
+<div id="result">まだ読み取っていません。</div>
+
+<button onclick="copyResult()">会員番号をコピー</button>
+</main>
 
 <script>
 let scanner = null;
-let running = false;
-let sent = false;
+let scanning = false;
+let memberNumber = '';
 
-async function startCamera() {
+async function startScan() {
   try {
     if (!window.isSecureContext) {
-      throw new Error("HTTPS接続が必要です。");
+      throw new Error('HTTPS接続が必要です。');
     }
 
     if (!navigator.mediaDevices ||
         !navigator.mediaDevices.getUserMedia) {
-      throw new Error("カメラ機能が利用できません。");
+      throw new Error('このブラウザではカメラを利用できません。');
     }
 
     if (!scanner) {
-      scanner = new Html5Qrcode("reader");
+      scanner = new Html5Qrcode('reader');
     }
 
-    document.getElementById("message").textContent =
-      "カメラを起動しています...";
-
     await scanner.start(
-      { facingMode: "environment" },
-      {
-        fps: 10,
-        qrbox: { width: 240, height: 240 }
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 240, height: 240 } },
+      async (text) => {
+        memberNumber = text.trim().replace(/^MEMBER:/i, '');
+        document.getElementById('result').textContent =
+          '読み取り成功：' + memberNumber;
+        await stopScan();
       },
-      async function(decodedText) {
-        if (sent) return;
-        sent = true;
-
-        const memberId = String(decodedText)
-          .trim()
-          .replace(/^MEMBER:/i, "");
-
-        document.getElementById("message").textContent =
-          "読み取り成功：" + memberId;
-
-        try {
-          if (running) {
-            await scanner.stop();
-            running = false;
-          }
-        } catch(e) {}
-
-        if (window.opener && !window.opener.closed) {
-          window.opener.postMessage({
-            type: "SHUKAI_QR_SCANNED",
-            memberId: memberId
-          }, "*");
-
-          document.getElementById("message").textContent =
-            "読み取り結果を受付画面に送りました。";
-        } else {
-          sent = false;
-          document.getElementById("message").textContent =
-            "受付画面が見つかりません。元の画面から開き直してください。";
-        }
-      },
-      function(error) {}
+      () => {}
     );
 
-    running = true;
-    document.getElementById("start").disabled = true;
+    scanning = true;
 
-    document.getElementById("message").textContent =
-      "QRコードをカメラに映してください。";
-
-  } catch(e) {
-    document.getElementById("message").textContent =
-      "カメラエラー：" + (e.name || "Error") +
-      " / " + (e.message || e);
+  } catch (e) {
+    document.getElementById('result').textContent =
+      'エラー：' + (e.message || e);
   }
 }
 
-async function closeScanner() {
-  if (scanner && running) {
+async function stopScan() {
+  if (scanner && scanning) {
     try {
       await scanner.stop();
-      running = false;
-    } catch(e) {}
+      scanning = false;
+    } catch (e) {
+      document.getElementById('result').textContent =
+        '停止エラー：' + e.message;
+    }
   }
-  window.close();
+}
+
+async function copyResult() {
+  if (!memberNumber) {
+    alert('先にQRコードを読み取ってください。');
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(memberNumber);
+    alert('会員番号をコピーしました。');
+  } catch (e) {
+    alert('コピーできません。番号を手動で控えてください。');
+  }
 }
 </script>
 </body>
