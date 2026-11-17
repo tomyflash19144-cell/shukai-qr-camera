@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>集会QR受付</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+:root{font-family:system-ui,-apple-system,sans-serif;color:#203040;background:#f3f6fa}body{margin:0;padding:14px}.wrap{max-width:760px;margin:auto}.card{background:white;border-radius:14px;padding:16px;margin:12px 0;box-shadow:0 2px 12px #0001}h1{font-size:1.4rem}h2{font-size:1.08rem;margin-top:0}label{display:block;font-weight:600;margin:10px 0 5px}input,select,button{font:inherit;width:100%;box-sizing:border-box;padding:12px;border:1px solid #ccd5df;border-radius:9px;margin:4px 0}button{background:#145da0;color:white;border:0;font-weight:700;cursor:pointer}button.alt{background:#566575}button.danger{background:#9b3030}.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}.hidden{display:none}.small{font-size:.88rem;color:#596879}.msg{padding:10px;background:#e7f4e8;border-radius:9px;margin-top:8px}.err{background:#fde9e7}.stat{font-size:1.8rem;font-weight:800}#reader{max-width:500px;margin:auto}
+</style></head><body><div class="wrap">
+<h1>📱 集会QR受付システム</h1><p class="small">受付担当者ごとのログイン方式です。QRコードには会員番号だけを入れてください。</p>
+<section id="login" class="card"><h2>ログイン</h2>
+<div class="row"><button class="alt" onclick="showLogin('staff')">受付担当者</button><button class="alt" onclick="showLogin('admin')">管理者</button></div>
+<div id="staffLogin"><label>ログインID</label><input id="loginId" autocomplete="username" placeholder="管理者から渡されたID"><label>暗証番号</label><input id="staffPin" type="password" inputmode="numeric" autocomplete="current-password"><button onclick="loginStaff()">ログイン</button></div>
+<div id="adminLogin" class="hidden"><label>管理者PIN</label><input id="adminPin" type="password" inputmode="numeric"><button onclick="loginAdmin()">管理者ログイン</button></div>
+<div id="loginMsg" class="small"></div></section>
+<section id="app" class="hidden">
+<div class="card"><div class="row"><div><strong id="who"></strong><div class="small" id="role"></div></div><button class="alt" onclick="doLogout()">ログアウト</button></div></div>
+<div class="card"><h2>1. 集会を選ぶ</h2><select id="eventSelect" onchange="refreshSummary()"></select><div class="row"><div><label>在籍会員数</label><div class="stat" id="memberCount">—</div></div><div><label>今回の出席数</label><div class="stat" id="count">0</div></div></div></div>
+<div class="card"><h2>2. QRコード受付</h2><p class="small">カメラの使用を許可してください。</p><button id="startBtn" onclick="startScan()">カメラを起動</button><button id="stopBtn" class="alt hidden" onclick="stopScan()">カメラを停止</button><div id="reader"></div><div id="result"></div>
+<label>カメラが使えない場合：会員番号を入力</label><div class="row"><input id="manualId" inputmode="numeric" placeholder="例：0001"><button onclick="manualScan()">出席登録</button></div></div>
+<div class="card"><h2>3. 最近の受付記録</h2><button class="alt" onclick="refreshSummary()">集計を更新</button><div id="recent"></div></div>
+<div id="adminPanel" class="card hidden"><h2>管理者専用メニュー</h2><h3>受付担当者を追加</h3><label>担当者名</label><input id="newStaffName" placeholder="例：佐藤"><label>初期暗証番号（数字6～12桁）</label><input id="newStaffPin" type="password" inputmode="numeric" placeholder="本人に別途伝える番号"><button onclick="addStaffUi()">担当者を登録</button><div id="newStaffResult"></div>
+<h3>受付担当者一覧</h3><div id="staffList"></div><hr><h3>集会を追加</h3><label>集会名</label><input id="newEventName" placeholder="例：定例集会"><label>開催日</label><input id="newEventDate" type="date"><button onclick="createEvent()">集会を追加</button><button class="danger" onclick="closeEvent()">選択中の集会を終了</button></div>
+</section></div>
+<script>
+let token='', role='', scanner=null, scanning=false, lastText='', lastAt=0;
+function call(fn,...args){return new Promise((resolve,reject)=>google.script.run.withSuccessHandler(resolve).withFailureHandler(e=>reject(new Error(e.message||e)))[fn](...args));}
+function showLogin(which){document.getElementById('staffLogin').classList.toggle('hidden',which!=='staff');document.getElementById('adminLogin').classList.toggle('hidden',which!=='admin');}
+async function loginStaff(){try{const r=await call('staffLogin',document.getElementById('loginId').value,document.getElementById('staffPin').value);enter(r);}catch(e){loginError(e);}}
+async function loginAdmin(){try{const r=await call('adminLogin',document.getElementById('adminPin').value);enter(r);}catch(e){loginError(e);}}
+function loginError(e){const el=document.getElementById('loginMsg');el.textContent=e.message;el.className='msg err';}
+async function enter(r){token=r.token;role=r.role;document.getElementById('login').classList.add('hidden');document.getElementById('app').classList.remove('hidden');document.getElementById('who').textContent=r.name;document.getElementById('role').textContent=role==='admin'?'管理者':'受付担当者';document.getElementById('adminPanel').classList.toggle('hidden',role!=='admin');await loadApp();}
+async function loadApp(){try{const [events,count]=await Promise.all([call('getEvents',token),call('getMemberCount',token)]);document.getElementById('memberCount').textContent=count;fillEvents(events);if(role==='admin')await loadStaff();if(events.length)await refreshSummary();}catch(e){alert(e.message);}}
+function fillEvents(events){const s=document.getElementById('eventSelect');s.innerHTML='';events.forEach(e=>{const o=document.createElement('option');o.value=e.id;o.textContent=e.name+'（'+e.date+'）';s.appendChild(o)});if(!events.length){const o=document.createElement('option');o.value='';o.textContent='管理者が集会を追加してください';s.appendChild(o);}}
+async function addStaffUi(){try{const r=await call('addStaff',token,document.getElementById('newStaffName').value,document.getElementById('newStaffPin').value);document.getElementById('newStaffResult').textContent='登録完了。ログインID：'+r.loginId+'。このIDと設定した暗証番号を担当者本人に安全に伝えてください。';document.getElementById('newStaffName').value='';document.getElementById('newStaffPin').value='';await loadStaff();}catch(e){alert(e.message);}}
+async function loadStaff(){const list=await call('listStaff',token),box=document.getElementById('staffList');box.innerHTML='';if(!list.length){box.textContent='受付担当者はまだ登録されていません。';return;}list.forEach(s=>{const d=document.createElement('div');d.className='card';const t=document.createElement('div');t.textContent=s.name+' / ID: '+s.loginId+' / '+s.status;d.appendChild(t);const b=document.createElement('button');b.className=s.status==='有効'?'danger':'alt';b.textContent=s.status==='有効'?'利用停止':'利用再開';b.onclick=async()=>{try{await call('setStaffStatus',token,s.id,s.status==='有効'?'停止':'有効');await loadStaff();}catch(e){alert(e.message);}};d.appendChild(b);box.appendChild(d);});}
+async function createEvent(){try{await call('addEvent',token,document.getElementById('newEventName').value,document.getElementById('newEventDate').value);document.getElementById('newEventName').value='';fillEvents(await call('getEvents',token));alert('集会を追加しました。');}catch(e){alert(e.message);}}
+async function closeEvent(){const id=document.getElementById('eventSelect').value;if(!id||!confirm('この集会の受付を終了しますか？'))return;try{await call('closeEvent',token,id);fillEvents(await call('getEvents',token));alert('受付を終了しました。');}catch(e){alert(e.message);}}
+async function startScan(){
+  if(!document.getElementById('eventSelect').value){
+    alert('管理者が集会を追加してください。');
+    return;
+  }
+
+  const result = document.getElementById('result');
+
+  try {
+    // HTTPS接続の確認
+    if(!window.isSecureContext){
+      throw new Error('HTTPS接続ではありません。');
+    }
+
+    // カメラ機能の確認
+    if(!navigator.mediaDevices ||
+       !navigator.mediaDevices.getUserMedia){
+      throw new Error('このブラウザではカメラ機能を利用できません。');
+    }
+
+    if(!scanner){
+      scanner = new Html5Qrcode('reader');
+    }
+
+    showResult('カメラを起動しています...',false);
+
+    // 背面カメラを優先して起動
+    await scanner.start(
+      { facingMode: 'environment' },
+      {
+        fps: 10,
+        qrbox: { width: 240, height: 240 },
+        aspectRatio: 1.0
+      },
+      (text) => {
+        const now = Date.now();
+        if(text === lastText && now-lastAt < 2500) return;
+        lastText = text;
+        lastAt = now;
+        handleScan(text);
+      },
+      () => {}
+    );
+
+    scanning = true;
+    document.getElementById('startBtn').classList.add('hidden');
+    document.getElementById('stopBtn').classList.remove('hidden');
+
+    showResult('カメラが起動しました。QRコードを読み取ってください。',false);
+
+  } catch(e) {
+    scanning = false;
+
+    document.getElementById('startBtn').classList.remove('hidden');
+    document.getElementById('stopBtn').classList.add('hidden');
+
+    showResult(
+      'カメラ起動エラー：' +
+      (e.name || 'Error') + ' / ' +
+      (e.message || String(e)),
+      true
+    );
+  }
+}
+async function stopScan(){if(scanner&&scanning){try{await scanner.stop();}catch(e){}scanning=false;}document.getElementById('startBtn').classList.remove('hidden');document.getElementById('stopBtn').classList.add('hidden');}
+function manualScan(){const v=document.getElementById('manualId').value.trim();if(v)handleScan(v);}
+async function handleScan(raw){const id=String(raw).trim().replace(/^MEMBER:/i,'');try{const r=await call('scanMember',token,document.getElementById('eventSelect').value,id);showResult(r.ok?(r.duplicate?'受付済み：':'出席登録：')+r.name+'（'+r.memberId+'） '+r.message:r.message,!r.ok||r.duplicate);document.getElementById('manualId').value='';await refreshSummary();}catch(e){showResult(e.message,true);}}
+function showResult(t,err){const el=document.getElementById('result');el.textContent=t;el.className='msg'+(err?' err':'');}
+async function refreshSummary(){const id=document.getElementById('eventSelect').value;if(!id)return;try{const s=await call('getSummary',token,id);document.getElementById('count').textContent=s.count;const box=document.getElementById('recent');box.innerHTML='';if(!s.recent.length){box.textContent='まだ受付記録はありません。';return;}const ul=document.createElement('ul');s.recent.forEach(r=>{const li=document.createElement('li');li.textContent=r.time+' '+r.name+'（'+r.id+'）／'+r.staff;ul.appendChild(li);});box.appendChild(ul);}catch(e){showResult(e.message,true);}}
+async function doLogout(){await stopScan();try{await call('logout',token);}catch(e){}token='';location.reload();}
+</script></body></html>
