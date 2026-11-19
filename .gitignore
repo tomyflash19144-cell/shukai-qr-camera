@@ -1,0 +1,16 @@
+# clasp / Google authentication
+.clasp.json
+.clasprc.json
+.clasprc
+.credentials/
+.token
+.token.json
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
