@@ -1,10 +1,17 @@
-name: GAS 接続確認
+
+name: GAS 自動同期
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'Code.gs'
+      - 'Index.html'
+      - 'appsscript.json'
 
 jobs:
-  check:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
@@ -30,5 +37,5 @@ jobs:
         run: |
           echo '{"scriptId":"1IqT4ZW2YQs2kH8BaKsIaQIkrTYQyiMoweYhTF5mmLVHzpkbtTTUvXIor","rootDir":""}' > .clasp.json
 
-      - name: GASの状態を確認
-        run: clasp status
+      - name: GASへソースを送信
+        run: clasp push -f
